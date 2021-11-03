@@ -19,7 +19,7 @@ maintainer:         yangm@emqx.io
 extra-source-files: CHANGELOG.md
 
 library
-    exposed-modules:  MyLib
+    exposed-modules:  Control.Effect.IOClasses
 
     -- Modules included in this library but not exported.
     -- other-modules:
