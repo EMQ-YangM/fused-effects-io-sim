@@ -1,0 +1,69 @@
+* 将io-sim, io-class移植到fused-effects
+** io-sim, io-class
+  1. https://github.com/input-output-hk/ouroboros-network/tree/master/io-classes
+  2. https://github.com/input-output-hk/ouroboros-network/tree/master/io-sim
+  这个库用于测试haskell网络代码。使用io-classes编写的代码可以同时在io 和 IOSim 这两种Monad中运行。
+  可以方便的对多线程代码进行测试。
+  该库支持的模拟:
+  1. 同步和异步异常；包括：抛出、捕捉和屏蔽同步和异步异常；
+  2. 并发（使用模拟线程），接口由 base和async库构成；
+  3. 软件事务内存（STM）；
+  4. 模拟时间；
+  5. 超时；
+  6. 动态类型的跟踪和事件日志跟踪；
+  7. 取消任何ST计算；
+  8. 死锁检测。
+** 将其移植到fused-effects
+  以下是一个移植原型例子，IO和IOSim s始终在单子栈最外层.同一段foo代码，可以在IO和IOSim中运行。
+  
+#+begin_src haskell
+  
+data MSay (m :: Type -> Type) a where
+  MSay :: String -> MSay m ()
+
+msay :: Has MSay sig m => String -> m ()
+msay s = send (MSay s)
+
+data MELog (m :: Type -> Type) a where
+  MELog :: String -> MELog m ()
+
+mtrace :: Has MELog sig m => String -> m ()
+mtrace s = send (MELog s)
+
+newtype MSayC a = MSayC { runMSayC :: forall s. IOSim s a }
+  deriving (Functor)
+
+instance Applicative MSayC where
+  pure x = MSayC (pure x)
+  (MSayC f) <*> (MSayC a) = MSayC (f <*> a)
+
+instance Monad MSayC where
+  MSayC a >>= f = MSayC $ a >>= (runMSayC . f)
+
+instance Algebra (MSay :+: MELog) MSayC where
+  alg hdl sig ctx = MSayC $ case sig of
+    (L (MSay s))  -> ctx <$ say s
+    (R (MELog s)) -> ctx <$ traceEventIO s
+
+runMSay f = runSimTrace $ runMSayC f
+
+-- newtype MSayC a = MSayC { runMSayC :: IO a }
+--   deriving (Functor , Applicative , Monad)
+
+-- instance Algebra MSay MSayC where
+--   alg hdl sig ctx = MSayC $ case sig of
+--     (MSay s) -> ctx <$ print s
+
+-- runMSay = runMSayC
+
+foo :: Has (MELog :+: MSay :+: State Int) sig m => m ()
+foo = do
+  put @Int 1000
+  mtrace "godless"
+  msay "nice"
+
+-- >>> runFoo
+-- Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventLog <<EventlogEvent>>)) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "nice")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") EventThreadFinished) (Nil (MainReturn (Time 0s) (1000,()) []))))
+runFoo = runMSay $ runState @Int 0 foo
+#+end_src
+
