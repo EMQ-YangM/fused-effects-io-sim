@@ -17,76 +17,162 @@
   以下是一个例子，IO和IOSim s始终在单子栈最外层.同一段foo代码，可以在IO和IOSim中运行。
   
 #+begin_src haskell
-                {-# LANGUAGE AllowAmbiguousTypes   #-}
-                {-# LANGUAGE FlexibleInstances     #-}
-                {-# LANGUAGE GADTs                 #-}
-                {-# LANGUAGE MultiParamTypeClasses #-}
-                {-# LANGUAGE ScopedTypeVariables   #-}
-                {-# LANGUAGE TypeApplications      #-}
-                {-# LANGUAGE TypeOperators         #-}
-                module Example where
+  {-# LANGUAGE AllowAmbiguousTypes   #-}
+  {-# LANGUAGE FlexibleInstances     #-}
+  {-# LANGUAGE GADTs                 #-}
+  {-# LANGUAGE MultiParamTypeClasses #-}
+  {-# LANGUAGE ScopedTypeVariables   #-}
+  {-# LANGUAGE TypeApplications      #-}
+  {-# LANGUAGE TypeOperators         #-}
+  module Example where
 
-                import           Control.Algebra
-                import           Control.Carrier.Error.Either
-                import           Control.Carrier.Lift
-                import           Control.Carrier.State.Strict
-                import           Control.Monad.Class.MonadFork
-                import           Control.Monad.Class.MonadSTM
-                import           Control.Monad.Class.MonadSay
-                import           Control.Monad.IOSim
-                import           Control.Monad.ST.Lazy
+  import           Control.Algebra
+  import           Control.Carrier.Error.Either
+  import           Control.Carrier.Lift
+  import           Control.Carrier.State.Strict
+  import           Control.Monad.Class.MonadFork
+  import           Control.Monad.Class.MonadSTM
+  import           Control.Monad.Class.MonadSay
+  import           Control.Monad.IOSim
+  import           Control.Monad.ST.Lazy
 
-                foo :: forall s sig m.
-                       (Has (Lift s :+: State Int :+: Error Int) sig m,
-                        Functor s,
-                        MonadSTM s,
-                        MonadSay s,
-                        MonadFork s,
-                        MonadThread s)
-                    => m ()
-                foo = do
-                  (tv, tq) <- sendM @s $ atomically $ do
-                    tv <- newTVar 10
-                    tq <- newTQueue
-                    pure (tv, tq)
+  foo :: forall s sig m.
+         (Has (Lift s :+: State Int :+: Error Int) sig m,
+          Functor s,
+          MonadSTM s,
+          MonadSay s,
+          MonadFork s,
+          MonadThread s)
+      => m ()
+  foo = do
+    (tv, tq) <- sendM @s $ atomically $ do
+      tv <- newTVar 10
+      tq <- newTQueue
+      pure (tv, tq)
 
-                  tid <- sendM @s myThreadId
+    tid <- sendM @s myThreadId
 
-                  sendM @s $ say (show tid)
+    sendM @s $ say (show tid)
 
-                  sendM @s $ do
-                    forkIO $ do
-                      tid1 <-  myThreadId
-                      say (show tid1)
+    sendM @s $ do
+      forkIO $ do
+        tid1 <-  myThreadId
+        say (show tid1)
 
-                  sendM @s $ atomically $ do
-                    writeTVar tv 30
+    sendM @s $ atomically $ do
+      writeTVar tv 30
 
-                  v <- sendM @s $ readTVarIO tv
-                  sendM @s $ say (show v)
+    v <- sendM @s $ readTVarIO tv
+    sendM @s $ say (show v)
 
-                instance Algebra (Lift (IOSim s)) (IOSim s) where
-                  alg hdl (LiftWith with) = with hdl
+  instance Algebra (Lift (IOSim s)) (IOSim s) where
+    alg hdl (LiftWith with) = with hdl
 
-                runFoo = runM @IO
-                       $ runState @Int 0
-                       $ runError @Int
-                       $ (foo @IO)
+  runFoo = runM @IO
+         $ runState @Int 0
+         $ runError @Int
+         $ (foo @IO)
 
-                runFoo1 :: forall s. ST s (SimTrace (Int, Either Int ()))
-                runFoo1 = runSimTraceST
-                       $ runState @Int 0
-                       $ runError @Int
-                       $ (foo @(IOSim s))
+  runFoo1 :: forall s. ST s (SimTrace (Int, Either Int ()))
+  runFoo1 = runSimTraceST
+         $ runState @Int 0
+         $ runError @Int
+         $ (foo @(IOSim s))
+
+  -- Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [TVarId 0,TVarId 1,TVarId 2]))
+  -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "ThreadId 0")) (Cons (SimEvent (Time 0s)
+  -- (ThreadId 0) (Just "main") (EventThreadForked (ThreadId 1))) (Cons (SimEvent (Time 0s) (ThreadId 0)
+  -- (Just "main") (EventTxCommitted [Labelled (TVarId 0) Nothing] [])) (Cons (SimEvent (Time 0s) (ThreadId 1)
+  -- Nothing (EventSay "ThreadId 1")) (Cons (SimEvent (Time 0s) (ThreadId 1) Nothing EventThreadFinished)
+  -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [])) (Cons (SimEvent (Time 0s)
+  -- (ThreadId 0) (Just "main") (EventSay "30")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main")
+  -- EventThreadFinished) (Nil (MainReturn (Time 0s) (0,Right ()) []))))))))))
+  runFoo2 = runST runFoo1
+#+end_src
+** 另一个例子
+#+begin_src haskell
+  {-# LANGUAGE FlexibleInstances          #-}
+  {-# LANGUAGE GADTs                      #-}
+  {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+  {-# LANGUAGE KindSignatures             #-}
+  {-# LANGUAGE MultiParamTypeClasses      #-}
+  {-# LANGUAGE ScopedTypeVariables        #-}
+  {-# LANGUAGE TypeApplications           #-}
+  {-# LANGUAGE TypeOperators              #-}
+  {-# LANGUAGE UndecidableInstances       #-}
+  module MyLib  where
+
+  import           Control.Algebra
+  import           Control.Carrier.Lift
+  import           Control.Carrier.Reader
+  import           Control.Effect.IOClasses
+  import           Control.Monad
+  import           Control.Monad.IO.Class
+  import           Data.Kind
+
+
+  data NodeAction message (m :: Type -> Type) a where
+    SendMessage :: message -> NodeAction message m ()
+    ReadMessage :: NodeAction message m message
+
+  sendMessage :: Has (NodeAction message) sig m => message -> m ()
+  sendMessage = send . SendMessage
+
+  readMessage :: Has (NodeAction message) sig m => m message
+  readMessage = send ReadMessage
+
+  newtype NodeActionC s message m a =
+    NodeActionC { runNodeActionC :: (ReaderC (TQueue_ (STM s) message) m) a}
+    deriving (Functor, Applicative ,Monad, MonadIO)
+
+  instance (Functor s,
+            MonadSTM s,
+            MonadSay s,
+            MonadDelay s,
+            MonadTime s,
+            Show message,
+            Has (Lift s) sig m)
+         => Algebra
+             (NodeAction message :+: sig)
+             (NodeActionC s message m) where
+    alg hdl sig ctx = NodeActionC $ case sig of
+      L (SendMessage s) -> ReaderC $ \tq -> do
+        sendM @s $ do
+            threadDelay 1
+            t <- getCurrentTime
+            say (show s)
+            say (show t)
+            atomically $ writeTQueue tq s
+            say "sendSuccess"
+        pure ctx
+      L ReadMessage -> ReaderC $ \tq -> do
+        v <- sendM @s $ do
+            v <- atomically $ readTQueue tq
+            say ("read message " ++ show v)
+            return v
+        pure (v <$ ctx)
+      R other -> alg (runNodeActionC . hdl) (R other) ctx
+
+  runNodeAction :: TQueue_ (STM s) message -> NodeActionC s message m a -> m a
+  runNodeAction tq f = runReader tq $ runNodeActionC f
+
+  foo :: Has (NodeAction String) sig m => m String
+  foo = do
+    sendMessage "nice"
+    readMessage @String
+
+  runFoo :: IO String
+  runFoo = do
+    tq <- newTQueueIO
+    runNodeAction @IO @String tq foo
+
+  runFoo1 :: forall s. ST s (SimTrace String)
+  runFoo1 = runSimTraceST $ do
+    tq <- newTQueueIO
+    runNodeAction @(IOSim s) @String tq foo
+
+  runFoo2 = selectTraceEventsSay $ runST runFoo1
+
   
-                -- Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [TVarId 0,TVarId 1,TVarId 2]))
-                -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "ThreadId 0")) (Cons (SimEvent (Time 0s)
-                -- (ThreadId 0) (Just "main") (EventThreadForked (ThreadId 1))) (Cons (SimEvent (Time 0s) (ThreadId 0)
-                -- (Just "main") (EventTxCommitted [Labelled (TVarId 0) Nothing] [])) (Cons (SimEvent (Time 0s) (ThreadId 1)
-                -- Nothing (EventSay "ThreadId 1")) (Cons (SimEvent (Time 0s) (ThreadId 1) Nothing EventThreadFinished)
-                -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [])) (Cons (SimEvent (Time 0s)
-                -- (ThreadId 0) (Just "main") (EventSay "30")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main")
-                -- EventThreadFinished) (Nil (MainReturn (Time 0s) (0,Right ()) []))))))))))
-                runFoo2 = runST runFoo1
 #+end_src
 
