@@ -1,4 +1,4 @@
-* 将io-sim, io-class移植到fused-effects
+* 将io-sim, io-class用于fused-effects
 ** io-sim, io-class
   1. https://github.com/input-output-hk/ouroboros-network/tree/master/io-classes
   2. https://github.com/input-output-hk/ouroboros-network/tree/master/io-sim
@@ -13,73 +13,80 @@
   6. 动态类型的跟踪和事件日志跟踪；
   7. 取消任何ST计算；
   8. 死锁检测。
-** 将其移植到fused-effects
-  以下是一个移植原型例子，IO和IOSim s始终在单子栈最外层.同一段foo代码，可以在IO和IOSim中运行。
+** 将其用于fused-effects
+  以下是一个例子，IO和IOSim s始终在单子栈最外层.同一段foo代码，可以在IO和IOSim中运行。
   
 #+begin_src haskell
-  {-# LANGUAGE AllowAmbiguousTypes   #-}
-  {-# LANGUAGE FlexibleInstances     #-}
-  {-# LANGUAGE GADTs                 #-}
-  {-# LANGUAGE MultiParamTypeClasses #-}
-  {-# LANGUAGE ScopedTypeVariables   #-}
-  {-# LANGUAGE TypeApplications      #-}
-  {-# LANGUAGE TypeOperators         #-}
-  module Example where
+                {-# LANGUAGE AllowAmbiguousTypes   #-}
+                {-# LANGUAGE FlexibleInstances     #-}
+                {-# LANGUAGE GADTs                 #-}
+                {-# LANGUAGE MultiParamTypeClasses #-}
+                {-# LANGUAGE ScopedTypeVariables   #-}
+                {-# LANGUAGE TypeApplications      #-}
+                {-# LANGUAGE TypeOperators         #-}
+                module Example where
 
-  import           Control.Algebra
-  import           Control.Carrier.Error.Either
-  import           Control.Carrier.Lift
-  import           Control.Carrier.State.Strict
-  import           Control.Monad.Class.MonadFork
-  import           Control.Monad.Class.MonadSTM
-  import           Control.Monad.Class.MonadSay
-  import           Control.Monad.IOSim
-  import           Control.Monad.ST.Lazy
+                import           Control.Algebra
+                import           Control.Carrier.Error.Either
+                import           Control.Carrier.Lift
+                import           Control.Carrier.State.Strict
+                import           Control.Monad.Class.MonadFork
+                import           Control.Monad.Class.MonadSTM
+                import           Control.Monad.Class.MonadSay
+                import           Control.Monad.IOSim
+                import           Control.Monad.ST.Lazy
 
-  foo :: forall s sig m.
-         (Has (Lift s :+: State Int :+: Error Int) sig m,
-          Functor s,
-          MonadSTM s,
-          MonadSay s,
-          MonadFork s,
-          MonadThread s)
-      => m ()
-  foo = do
-    (tv, tq) <- sendM @s $ atomically $ do
-      tv <- newTVar 10
-      tq <- newTQueue
-      pure (tv, tq)
+                foo :: forall s sig m.
+                       (Has (Lift s :+: State Int :+: Error Int) sig m,
+                        Functor s,
+                        MonadSTM s,
+                        MonadSay s,
+                        MonadFork s,
+                        MonadThread s)
+                    => m ()
+                foo = do
+                  (tv, tq) <- sendM @s $ atomically $ do
+                    tv <- newTVar 10
+                    tq <- newTQueue
+                    pure (tv, tq)
 
-    tid <- sendM @s myThreadId
+                  tid <- sendM @s myThreadId
 
-    sendM @s $ say (show tid)
+                  sendM @s $ say (show tid)
 
-    sendM @s $ do
-      forkIO $ do
-        tid1 <-  myThreadId
-        say (show tid1)
+                  sendM @s $ do
+                    forkIO $ do
+                      tid1 <-  myThreadId
+                      say (show tid1)
 
-    sendM @s $ atomically $ do
-      writeTVar tv 30
+                  sendM @s $ atomically $ do
+                    writeTVar tv 30
 
-    v <- sendM @s $ readTVarIO tv
-    sendM @s $ say (show v)
+                  v <- sendM @s $ readTVarIO tv
+                  sendM @s $ say (show v)
 
-  instance Algebra (Lift (IOSim s)) (IOSim s) where
-    alg hdl (LiftWith with) = with hdl
+                instance Algebra (Lift (IOSim s)) (IOSim s) where
+                  alg hdl (LiftWith with) = with hdl
 
-  runFoo = runM @IO
-         $ runState @Int 0
-         $ runError @Int
-         $ (foo @IO)
+                runFoo = runM @IO
+                       $ runState @Int 0
+                       $ runError @Int
+                       $ (foo @IO)
 
-  runFoo1 :: forall s. ST s (SimTrace (Int, Either Int ()))
-  runFoo1 = runSimTraceST
-         $ runState @Int 0
-         $ runError @Int
-         $ (foo @(IOSim s))
+                runFoo1 :: forall s. ST s (SimTrace (Int, Either Int ()))
+                runFoo1 = runSimTraceST
+                       $ runState @Int 0
+                       $ runError @Int
+                       $ (foo @(IOSim s))
   
-  -- Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [TVarId 0,TVarId 1,TVarId 2])) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "ThreadId 0")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventThreadForked (ThreadId 1))) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [Labelled (TVarId 0) Nothing] [])) (Cons (SimEvent (Time 0s) (ThreadId 1) Nothing (EventSay "ThreadId 1")) (Cons (SimEvent (Time 0s) (ThreadId 1) Nothing EventThreadFinished) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [])) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "30")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") EventThreadFinished) (Nil (MainReturn (Time 0s) (0,Right ()) []))))))))))
-  runFoo2 = runST runFoo1
+                -- Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [TVarId 0,TVarId 1,TVarId 2]))
+                -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventSay "ThreadId 0")) (Cons (SimEvent (Time 0s)
+                -- (ThreadId 0) (Just "main") (EventThreadForked (ThreadId 1))) (Cons (SimEvent (Time 0s) (ThreadId 0)
+                -- (Just "main") (EventTxCommitted [Labelled (TVarId 0) Nothing] [])) (Cons (SimEvent (Time 0s) (ThreadId 1)
+                -- Nothing (EventSay "ThreadId 1")) (Cons (SimEvent (Time 0s) (ThreadId 1) Nothing EventThreadFinished)
+                -- (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main") (EventTxCommitted [] [])) (Cons (SimEvent (Time 0s)
+                -- (ThreadId 0) (Just "main") (EventSay "30")) (Cons (SimEvent (Time 0s) (ThreadId 0) (Just "main")
+                -- EventThreadFinished) (Nil (MainReturn (Time 0s) (0,Right ()) []))))))))))
+                runFoo2 = runST runFoo1
 #+end_src
 
